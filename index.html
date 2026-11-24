@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sarif-lab — SARIF 扫描结果本地查看</title>
+  <meta name="description" content="在浏览器里粘贴 SARIF 报告，本地按严重级别、规则和文件汇总发现，并展开数据流。不上传。">
+  <style>
+    :root {
+      --bg: #10161a; --bg-2: #171e24; --paper: #1c252c; --ink: #e6eef2;
+      --muted: #8b9aa4; --line: #2b3841;
+      --ok: #3ecfbf; --ok-dim: rgba(62, 207, 191, 0.16);
+      --warn: #e0b45c; --warn-dim: rgba(224, 180, 92, 0.16);
+      --bad: #e06a5c; --bad-dim: rgba(224, 106, 92, 0.16);
+      --info: #6ea8e8; --info-dim: rgba(110, 168, 232, 0.14);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+    body {
+      font-family: "IBM Plex Sans", "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.5; min-height: 100vh;
+    }
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 1.6rem 1.2rem 3rem; }
+    header h1 {
+      font-family: ui-monospace, "IBM Plex Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+      font-size: 1.35rem; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 0.35rem;
+    }
+    header h1 span.accent { color: var(--ok); }
+    .badge {
+      display: inline-block; margin-left: 0.5rem; padding: 0.05rem 0.45rem;
+      border: 1px solid var(--ok); color: var(--ok); font-size: 0.7rem;
+      vertical-align: middle; letter-spacing: 0.04em;
+    }
+    .lede { margin: 0; color: var(--muted); max-width: 48rem; }
+    .panel {
+      margin-top: 1.25rem; background: var(--paper);
+      border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem;
+    }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 1rem; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    .field-label { display: block; color: var(--muted); font-size: 0.78rem; margin: 0 0 0.35rem; }
+    textarea {
+      width: 100%; min-height: 280px; resize: vertical;
+      background: var(--bg); color: var(--ink);
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 0.7rem 0.8rem; line-height: 1.45; font-size: 0.78rem;
+      font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    }
+    textarea:focus { outline: 2px solid var(--ok); outline-offset: 1px; }
+    #drop.over textarea { border-color: var(--ok); background: var(--ok-dim); }
+    .samples, .actions, .toolbar { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.7rem; align-items: center; }
+    .toolbar { margin-top: 0.15rem; margin-bottom: 0.55rem; }
+    button, select, .file-btn {
+      appearance: none; background: var(--bg-2); color: var(--ink);
+      border: 1px solid var(--line); border-radius: 999px;
+      padding: 0.28rem 0.7rem; font-size: 0.78rem; cursor: pointer;
+    }
+    button:hover, .file-btn:hover, select:hover { border-color: var(--ok); color: var(--ok); }
+    button.primary { background: var(--ok-dim); border-color: var(--ok); color: var(--ok); }
+    button.level-toggle.on.bad { border-color: var(--bad); color: var(--bad); background: var(--bad-dim); }
+    button.level-toggle.on.warn { border-color: var(--warn); color: var(--warn); background: var(--warn-dim); }
+    button.level-toggle.on.info { border-color: var(--info); color: var(--info); background: var(--info-dim); }
+    button.level-toggle.on.ok { border-color: var(--ok); color: var(--ok); background: var(--ok-dim); }
+    button.level-toggle:not(.on) { opacity: 0.45; }
+    input[type="search"] {
+      flex: 1; min-width: 8rem; background: var(--bg); color: var(--ink);
+      border: 1px solid var(--line); border-radius: 999px;
+      padding: 0.28rem 0.7rem; font-size: 0.78rem;
+    }
+    input[type="search"]:focus { outline: 2px solid var(--ok); outline-offset: 1px; }
+    label.check { color: var(--muted); font-size: 0.78rem; display: inline-flex; gap: 0.3rem; align-items: center; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.2rem 0 0.55rem; }
+    .chip {
+      font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted); background: var(--bg);
+    }
+    .chip.ok { border-color: var(--ok); color: var(--ok); background: var(--ok-dim); }
+    .chip.warn { border-color: var(--warn); color: var(--warn); background: var(--warn-dim); }
+    .chip.bad { border-color: var(--bad); color: var(--bad); background: var(--bad-dim); }
+    .chip.info { border-color: var(--info); color: var(--info); background: var(--info-dim); }
+    .shown, .empty, .error { color: var(--muted); font-size: 0.88rem; }
+    .error { color: var(--bad); }
+    .shown { margin: 0 0 0.7rem; font-size: 0.78rem; }
+    .group h2 {
+      font-size: 0.92rem; font-weight: 600; margin: 0.9rem 0 0.45rem;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      word-break: break-word;
+    }
+    .group h2 .count { color: var(--muted); font-weight: 400; font-size: 0.78rem; }
+    .finding {
+      margin: 0 0 0.55rem; border-left: 3px solid var(--line);
+      padding: 0.5rem 0.6rem 0.45rem 0.7rem;
+      background: var(--bg); border-radius: 0 6px 6px 0;
+    }
+    .finding.ok { border-left-color: var(--ok); }
+    .finding.warn { border-left-color: var(--warn); }
+    .finding.bad { border-left-color: var(--bad); }
+    .finding.info { border-left-color: var(--info); }
+    .finding-head { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+    .rule {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.8rem;
+    }
+    .flag {
+      font-size: 0.7rem; padding: 0.05rem 0.4rem; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted);
+    }
+    .msg { margin-top: 0.3rem; font-size: 0.86rem; word-break: break-word; }
+    .place, .snip {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.75rem; color: var(--muted); margin-top: 0.2rem;
+    }
+    pre.snip {
+      margin: 0.35rem 0 0; padding: 0.35rem 0.5rem;
+      background: var(--bg-2); border-radius: 4px; overflow: auto;
+      color: var(--ink); white-space: pre-wrap;
+    }
+    .node-flags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+    .node-flags span {
+      font-size: 0.7rem; padding: 0.05rem 0.4rem; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted);
+    }
+    .help { color: var(--info); font-size: 0.75rem; margin-left: 0.35rem; }
+    .flow { margin-top: 0.4rem; }
+    .flow-title { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.04em; }
+    .flow ol { margin: 0.2rem 0 0; padding-left: 1.1rem; }
+    .flow li { font-size: 0.78rem; margin: 0.15rem 0; }
+    .flow-place { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    footer { margin-top: 1.5rem; color: var(--muted); font-size: 0.78rem; }
+    footer a { color: var(--info); }
+    .toast { color: var(--ok); font-size: 0.78rem; margin-left: 0.4rem; }
+    #file { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>sarif-lab <span class="accent">SARIF</span><span class="badge">本地 · 不上传</span></h1>
+      <p class="lede">把 CodeQL、Semgrep、ESLint、Trivy 等工具导出的 SARIF 报告贴进来，在浏览器里按严重级别、规则和文件汇总发现，并展开数据流步骤。计算都在本机完成，不会把内容发到任何服务器。</p>
+    </header>
+    <div class="grid">
+      <section class="panel" id="drop">
+        <label class="field-label" for="src">SARIF JSON</label>
+        <textarea id="src" spellcheck="false" placeholder="粘贴 SARIF 2.1 / 2.0 JSON，或把 .sarif / .json 文件拖到这里……"></textarea>
+        <div class="samples" id="samples"></div>
+        <div class="actions">
+          <button type="button" class="primary" id="btn-copy">复制 Markdown 摘要</button>
+          <button type="button" id="btn-clear">清空</button>
+          <label class="file-btn">打开文件<input type="file" id="file" accept=".sarif,.json,application/json,application/sarif+json"></label>
+          <span class="toast" id="toast" hidden>已复制</span>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="toolbar">
+          <input type="search" id="q" placeholder="筛选规则、文件、正文……" aria-label="筛选">
+          <select id="group" aria-label="分组">
+            <option value="file">按文件</option>
+            <option value="rule">按规则</option>
+            <option value="level">按严重级别</option>
+            <option value="tool">按工具</option>
+          </select>
+          <span id="levels"></span>
+          <label class="check"><input type="checkbox" id="include-suppressed"> 显示已抑制</label>
+        </div>
+        <div id="out">
+          <p class="empty">左侧贴入 SARIF，或点一个示例。</p>
+        </div>
+      </section>
+    </div>
+    <footer>
+      示例里的路径、规则和代码都是虚构样本。解析按 SARIF 2.1.0 常见字段编写，不保证覆盖每一种工具的私有扩展。源码：<a href="https://github.com/temptation2017/sarif-lab">temptation2017/sarif-lab</a>
+    </footer>
+  </div>
+  <script src="sarif.js"></script>
+  <script src="samples.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
